@@ -60,6 +60,13 @@ service cloud.firestore {
     }
 
     // -----------------------------------------------------------------
+    // SYSTEM TESTS COLLECTION RULES
+    // -----------------------------------------------------------------
+    match /system_tests/{testId} {
+      allow read: if true;
+    }
+
+    // -----------------------------------------------------------------
     // CARS COLLECTION RULES
     // -----------------------------------------------------------------
     match /cars/{carId} {
@@ -78,7 +85,7 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly([
             'brand', 'model', 'year', 'km', 'price', 'location', 
             'fuel', 'transmission', 'permuta', 'permutaPreferences', 
-            'description', 'image', 'images', 'videos'
+            'description', 'image', 'images', 'videos', 'ownerName', 'ownerUid', 'id', 'createdAt', 'likes', 'views'
           ])
         );
 
@@ -129,7 +136,12 @@ service cloud.firestore {
         && (request.auth.uid in incoming().participants)
         && incoming().participants.size() == 2;
 
-      allow update: if false; // Matches are immutable once formed
+      // Allow updating of match (e.g., updating unread status lists) by participants
+      allow update: if isSignedIn()
+        && (request.auth.uid in existing().participants)
+        && (request.auth.uid in incoming().participants)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['unreadUids']);
+
       allow delete: if isSignedIn() && (request.auth.uid in existing().participants);
 
       // ---------------------------------------------------------------
@@ -140,10 +152,14 @@ service cloud.firestore {
         allow read: if isSignedIn() 
           && (request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.participants);
 
-        // Must be participant to send message, and senderUid must equal auth UID
+        // Must be participant to send message, and senderUid must equal auth UID, system, or other participant (initial chat creation)
         allow create: if isSignedIn()
           && (request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.participants)
-          && isOwner(incoming().senderUid)
+          && (
+            isOwner(incoming().senderUid) ||
+            incoming().senderUid == 'system' ||
+            incoming().senderUid in get(/databases/$(database)/documents/matches/$(matchId)).data.participants
+          )
           && isValidMessage(incoming());
 
         allow update: if false; // Messages are immutable

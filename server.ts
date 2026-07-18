@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import cors from 'cors';
+import { GoogleGenAI } from '@google/genai';
 
 // Validate Chilean license plate format (e.g. AB1234 or ABCD12)
 function isValidChileanPlate(plate: string): boolean {
@@ -136,6 +137,78 @@ async function startServer() {
     } catch (err) {
       console.error('Error verifying plate:', err);
       return res.status(500).json({ error: 'Error interno de validación del servidor.' });
+    }
+  });
+
+  // Lazy initialize Gemini Client
+  let aiClient: GoogleGenAI | null = null;
+  function getGeminiClient(): GoogleGenAI {
+    if (!aiClient) {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error('GEMINI_API_KEY environment variable is required');
+      }
+      aiClient = new GoogleGenAI({ apiKey });
+    }
+    return aiClient;
+  }
+
+  // API Route: Gemini Chatbot Persona Response
+  app.post('/api/gemini-chat', async (req, res) => {
+    try {
+      const { senderName, carSpecs, permutaPreferences, chatPersona, userMessage, history } = req.body;
+
+      if (!senderName || !userMessage) {
+        return res.status(400).json({ error: 'Faltan parámetros requeridos.' });
+      }
+
+      const client = getGeminiClient();
+
+      const chatPersonaConfig = chatPersona || {
+        greeting: '¡Hola! Me interesó tu auto.',
+        aboutCar: 'Está impecable, muy cuidado.',
+        permutaOpinion: 'Me tinca la permuta.',
+        closingNegotiation: 'Hablemos para coordinar.'
+      };
+
+      const systemInstruction = `Eres ${senderName}, un vendedor/permutador de autos en Chile. Tu vehículo es un ${carSpecs || 'Auto'}. 
+Tus preferencias de permuta son: "${permutaPreferences || 'Abierto a ofertas'}".
+Tu personalidad y opiniones típicas son:
+- Saludo: "${chatPersonaConfig.greeting}"
+- Sobre tu auto: "${chatPersonaConfig.aboutCar}"
+- Opinión de permutas: "${chatPersonaConfig.permutaOpinion}"
+- Cierre: "${chatPersonaConfig.closingNegotiation}"
+
+Instrucciones:
+1. Responde al mensaje del usuario en español de Chile, usando modismos chilenos naturales y amigables (como "harto", "tinca", "al tiro", "altiro", "compadre", "conversar", "coordinar", "impecable") de manera corta (máximo 2 a 3 líneas).
+2. Mantente en el papel del dueño del vehículo y responde coherentemente a su propuesta. No reveles que eres una inteligencia artificial. No uses hashtags ni formato JSON.`;
+
+      // Build context from history
+      const formattedHistory = Array.isArray(history) 
+        ? history.slice(-6).map((h: any) => `${h.sender === 'user' ? 'Usuario' : senderName}: ${h.text}`).join('\n')
+        : '';
+
+      const promptText = `${formattedHistory}\nUsuario: ${userMessage}\n${senderName}:`;
+
+      const response = await client.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: promptText,
+        config: {
+          systemInstruction: systemInstruction,
+          maxOutputTokens: 200,
+          temperature: 0.8,
+        }
+      });
+
+      const reply = response.text?.trim() || 'Hablemos por Whatsapp para coordinar.';
+      return res.json({ success: true, text: reply });
+
+    } catch (err: any) {
+      console.error('Error calling Gemini API:', err);
+      return res.json({ 
+        success: true, 
+        text: '¡Hola compadre! Estoy medio ocupado manejando ahora, pero me interesa caleta la propuesta. ¿Hablemos por Whatsapp para coordinar bien?'
+      });
     }
   });
 

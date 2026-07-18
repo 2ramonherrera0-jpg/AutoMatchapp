@@ -43,15 +43,15 @@ export const auth = getAuth(app);
  */
 export async function validateFirebaseConnection(): Promise<boolean> {
   try {
-    // Attempt an asynchronous check from server
-    await getDocFromServer(doc(db, '_connection_test_placeholder_non_existent_'));
-    console.log("Firebase connection validated successfully.");
+    // Attempt an asynchronous check from server with a valid even segment (2 segments) path
+    await getDocFromServer(doc(db, 'system_tests', 'connection_test_placeholder'));
+    console.log("Conexión con Firebase validada con éxito.");
     return true;
   } catch (error: any) {
     if (error instanceof Error && error.message.includes('offline')) {
-      console.warn("Firebase warning: Client is offline. Cached resources will be used.");
+      console.warn("Advertencia de Firebase: El cliente está desconectado. Se utilizarán recursos en caché.");
     } else {
-      console.error("Firebase connection error. Please review your credentials:", error);
+      console.error("Error de conexión de Firebase. Por favor, revisa tus credenciales:", error);
     }
     return false;
   }

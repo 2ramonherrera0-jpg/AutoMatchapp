@@ -26,6 +26,8 @@ export interface Car {
     permutaOpinion: string;
     closingNegotiation: string;
   };
+  ownerUid?: string;
+  isSeeded?: boolean;
 }
 
 export interface Message {
@@ -48,6 +50,7 @@ export interface Match {
 }
 
 export interface UserCar {
+  id?: string;
   brand: string;
   model: string;
   year: number;

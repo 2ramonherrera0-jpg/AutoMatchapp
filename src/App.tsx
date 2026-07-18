@@ -29,7 +29,37 @@ import { playEngineSound, EngineType } from './lib/audio';
 // @ts-ignore
 import appLogo from './assets/images/app_logo_1784102975399.jpg';
 
+// Firebase imports
+import { 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signInAnonymously, 
+  signOut 
+} from 'firebase/auth';
+import { 
+  doc, 
+  setDoc, 
+  getDoc, 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  onSnapshot, 
+  updateDoc, 
+  serverTimestamp, 
+  orderBy, 
+  limit,
+  deleteDoc
+} from 'firebase/firestore';
+import { auth, db } from './lib/firebase';
+
 export default function App() {
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+
   // Onboarding & Profile State
   const [userCar, setUserCar] = useState<UserCar | null>(null);
   const [userName, setUserName] = useState<string>('');
@@ -47,6 +77,9 @@ export default function App() {
   const [leftSwipedCarIds, setLeftSwipedCarIds] = useState<string[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [isBoosted, setIsBoosted] = useState<boolean>(false);
+
+  // Cars State from Firestore
+  const [dbCars, setDbCars] = useState<Car[]>([]);
 
   // Global Search Preferences State
   const [searchPreferences, setSearchPreferences] = useState<{
@@ -67,77 +100,63 @@ export default function App() {
   // Ficha/Detail dialog for popup view from chat or stats
   const [detailCar, setDetailCar] = useState<Car | null>(null);
 
-  // Load from LocalStorage
+  // Firebase Auth State Listener & User Profile Fetcher
   useEffect(() => {
-    const storedUserCar = localStorage.getItem('automatch_user_car');
-    const storedUserName = localStorage.getItem('automatch_user_name');
-    const storedSwiped = localStorage.getItem('automatch_swiped_ids');
-    const storedMatches = localStorage.getItem('automatch_matches');
-    const storedBoosted = localStorage.getItem('automatch_boosted');
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      // Prevent auth observer from clearing local user if in local mode
+      if (currentUser?.isLocal) {
+        setAuthLoading(false);
+        setIsLoaded(true);
+        return;
+      }
 
-    if (storedUserCar && storedUserName) {
-      setUserCar(JSON.parse(storedUserCar));
-      setUserName(storedUserName);
-    }
-    if (storedSwiped) {
-      setSwipedCarIds(JSON.parse(storedSwiped));
-    }
-    const storedLeftSwiped = localStorage.getItem('automatch_left_swiped_ids');
-    if (storedLeftSwiped) {
-      setLeftSwipedCarIds(JSON.parse(storedLeftSwiped));
-    }
-    if (storedMatches) {
-      setMatches(JSON.parse(storedMatches));
-    } else {
-      // Seed a default welcoming match to show clients how it works!
-      // We will match them with Andrés and his Suzuki Swift Sport as a starter match!
-      const defaultCar = MOCK_CARS[0];
-      const initialMatch: Match = {
-        id: defaultCar.id,
-        car: defaultCar,
-        timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
-        unread: true,
-        messages: [
-          {
-            id: 'system_init',
-            sender: 'other',
-            text: `[Sistema] ¡Es un AutoMatch! Ambos están interesados. Andrés busca: "${defaultCar.permutaPreferences}"`,
-            timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
-          },
-          {
-            id: 'init_msg_1',
-            sender: 'other',
-            text: defaultCar.chatPersona?.greeting || '¡Hola! Vi tu auto y me interesó harto para permuta. ¿Buscas permutar o vender?',
-            timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
+      setAuthLoading(true);
+      if (user) {
+        setCurrentUser(user);
+        setAuthError(null);
+        try {
+          const userDocSnap = await getDoc(doc(db, 'users', user.uid));
+          if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            setUserName(userData.name || 'Usuario');
+            
+            // Query user's car
+            const carsQuery = query(collection(db, 'cars'), where('ownerUid', '==', user.uid));
+            const carsSnap = await getDocs(carsQuery);
+            if (!carsSnap.empty) {
+              const carData = { id: carsSnap.docs[0].id, ...carsSnap.docs[0].data() } as unknown as UserCar;
+              setUserCar(carData);
+            } else {
+              setUserCar(null);
+            }
+          } else {
+            setUserName('');
+            setUserCar(null);
           }
-        ]
-      };
-      setMatches([initialMatch]);
-      localStorage.setItem('automatch_matches', JSON.stringify([initialMatch]));
-    }
-    if (storedBoosted) {
-      setIsBoosted(JSON.parse(storedBoosted));
-    }
+        } catch (err) {
+          console.error('Error al obtener el perfil de usuario:', err);
+        }
+      } else {
+        setCurrentUser(null);
+        setUserName('');
+        setUserCar(null);
+      }
+      setAuthLoading(false);
+      setIsLoaded(true);
+    });
 
-    const storedSearchPrefs = localStorage.getItem('automatch_search_preferences');
-    if (storedSearchPrefs) {
-      setSearchPreferences(JSON.parse(storedSearchPrefs));
-    }
+    return () => unsubscribe();
+  }, [currentUser?.isLocal]);
 
-    setIsLoaded(true);
-  }, []);
-
-  // Play startup engine sound on the very first user interaction with the page
+  // Play startup sound on first gesture
   useEffect(() => {
     let triggered = false;
     const handleFirstGesture = () => {
       if (triggered) return;
       triggered = true;
-      
       const savedSound = (localStorage.getItem('automatch_engine_sound') as EngineType) || 'v8';
       playEngineSound(savedSound);
       
-      // Remove listeners so it only triggers once per app lifecycle load
       window.removeEventListener('click', handleFirstGesture);
       window.removeEventListener('keydown', handleFirstGesture);
       window.removeEventListener('touchstart', handleFirstGesture);
@@ -154,75 +173,520 @@ export default function App() {
     };
   }, []);
 
-  // Save to LocalStorage
-  const saveToStorage = (key: string, value: any) => {
-    localStorage.setItem(key, JSON.stringify(value));
-  };
+  // Seeding and listening to All Cars
+  useEffect(() => {
+    if (!currentUser) return;
 
-  const handleOnboardingComplete = (car: UserCar, name: string) => {
-    setUserCar(car);
-    setUserName(name);
-    localStorage.setItem('automatch_user_car', JSON.stringify(car));
-    localStorage.setItem('automatch_user_name', name);
-  };
+    if (currentUser.isLocal) {
+      setDbCars(MOCK_CARS);
+      return;
+    }
 
-  // Triggered when user swipes Right (Like) or Up (Super Like)
-  const handleSwipeAction = (car: Car, type: 'like' | 'superlike') => {
-    // Save as swiped
-    const updatedSwiped = [...swipedCarIds, car.id];
-    setSwipedCarIds(updatedSwiped);
-    saveToStorage('automatch_swiped_ids', updatedSwiped);
+    const carsCol = collection(db, 'cars');
+    const unsubscribe = onSnapshot(carsCol, async (snap) => {
+      let carsList: Car[] = [];
+      snap.forEach((doc) => {
+        carsList.push({ id: doc.id, ...doc.data() } as Car);
+      });
 
-    // 40% chance of Match if car likes user, OR 100% chance if Super Like or car is preset to like
-    const isMatch = car.likesUser || type === 'superlike';
+      // If db is empty (or contains only user's car), seed mock cars
+      if (carsList.length <= 1) {
+        console.log('Sembrando MOCK_CARS iniciales en Firestore...');
+        const seededCars: Car[] = [];
+        for (const mockCar of MOCK_CARS) {
+          const carId = `seeded_${mockCar.id}`;
+          const carDocRef = doc(db, 'cars', carId);
+          const carPayload = {
+            ...mockCar,
+            id: carId,
+            ownerUid: `mock_owner_${mockCar.id}`,
+            createdAt: new Date().toISOString(),
+            isSeeded: true
+          };
+          await setDoc(carDocRef, carPayload);
+          seededCars.push(carPayload as any);
+        }
+        setDbCars(seededCars);
+      } else {
+        setDbCars(carsList);
+      }
+    });
 
-    if (isMatch) {
-      // Add a small delay to simulate real human feedback
-      setTimeout(() => {
-        const newMatch: Match = {
-          id: car.id,
-          car,
+    return () => unsubscribe();
+  }, [currentUser, userCar]);
+
+  // Listen to current user swipes
+  useEffect(() => {
+    if (!currentUser) {
+      setSwipedCarIds([]);
+      setLeftSwipedCarIds([]);
+      return;
+    }
+
+    if (currentUser.isLocal) {
+      const storedSwiped = localStorage.getItem('automatch_swiped_ids');
+      const storedLeftSwiped = localStorage.getItem('automatch_left_swiped_ids');
+      setSwipedCarIds(storedSwiped ? JSON.parse(storedSwiped) : []);
+      setLeftSwipedCarIds(storedLeftSwiped ? JSON.parse(storedLeftSwiped) : []);
+      return;
+    }
+
+    const q = query(collection(db, 'swipes'), where('senderUid', '==', currentUser.uid));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const swipedAll: string[] = [];
+      const swipedLeft: string[] = [];
+      snap.forEach((doc) => {
+        const data = doc.data();
+        swipedAll.push(data.targetCarId);
+        if (data.type === 'dislike') {
+          swipedLeft.push(data.targetCarId);
+        }
+      });
+      setSwipedCarIds(swipedAll);
+      setLeftSwipedCarIds(swipedLeft);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  // Listen to matches
+  useEffect(() => {
+    if (!currentUser || !userCar) {
+      setMatches([]);
+      return;
+    }
+
+    if (currentUser.isLocal) {
+      const storedMatches = localStorage.getItem('automatch_matches');
+      if (storedMatches) {
+        setMatches(JSON.parse(storedMatches));
+      } else {
+        // Seed default welcoming match
+        const defaultCar = dbCars[0] || MOCK_CARS[0];
+        const initialMatch: Match = {
+          id: `local_match_${defaultCar.id}`,
+          car: defaultCar,
           timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
           unread: true,
           messages: [
             {
-              id: `sys_${Date.now()}`,
+              id: 'system_init',
               sender: 'other',
-              text: `[Sistema] ¡Felicidades, es un AutoMatch! Has conectado con ${car.ownerName} para negociar.`,
+              text: `[Sistema] ¡Es un AutoMatch! Ambos están interesados. Andrés busca: "${defaultCar.permutaPreferences}"`,
               timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
             },
             {
-              id: `msg_${Date.now()}`,
+              id: 'init_msg_1',
               sender: 'other',
-              text: car.chatPersona?.greeting || `¡Hola! Me encantó tu publicación. ¿Hablemos de negocios?`,
+              text: defaultCar.chatPersona?.greeting || '¡Hola! Vi tu auto y me interesó harto para permuta. ¿Buscas permutar o vender?',
               timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
             }
           ]
         };
+        setMatches([initialMatch]);
+        localStorage.setItem('automatch_matches', JSON.stringify([initialMatch]));
+      }
+      return;
+    }
 
-        // Update matches state via functional updater to prevent stale references & loss of sent messages
-        setMatches(prevMatches => {
-          const updatedMatches = [newMatch, ...prevMatches.filter(m => m.id !== car.id)];
-          saveToStorage('automatch_matches', updatedMatches);
-          return updatedMatches;
+    const q = query(
+      collection(db, 'matches'),
+      where('participants', 'array-contains', currentUser.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const loadedMatches: Match[] = [];
+      snap.forEach((matchDoc) => {
+        const matchData = matchDoc.data();
+        const targetCarId = matchData.carId1 === (userCar as any).id ? matchData.carId2 : matchData.carId1;
+        const targetCar = dbCars.find(c => c.id === targetCarId);
+        
+        if (targetCar) {
+          loadedMatches.push({
+            id: matchDoc.id,
+            car: targetCar,
+            timestamp: matchData.createdAt ? new Date(matchData.createdAt).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+            messages: [], // messages will be loaded by dynamic messages loaders
+            unread: matchData.unreadUids?.includes(currentUser.uid) || false
+          });
+        }
+      });
+
+      setMatches(loadedMatches);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser, dbCars, userCar]);
+
+  // Real-time messages listener for the active match
+  useEffect(() => {
+    if (!currentUser || !activeMatchId || currentUser.isLocal) return;
+
+    const msgsColRef = collection(db, 'matches', activeMatchId, 'messages');
+    const q = query(msgsColRef, orderBy('createdAt', 'asc'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const messagesList: Message[] = [];
+      snapshot.forEach((msgDoc) => {
+        const msgData = msgDoc.data();
+        messagesList.push({
+          id: msgDoc.id,
+          sender: msgData.senderUid === currentUser.uid ? 'user' : 'other',
+          text: msgData.text,
+          timestamp: msgData.timestamp || new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+          mediaType: msgData.mediaType || undefined,
+          mediaUrl: msgData.mediaUrl || undefined,
+          callDuration: msgData.callDuration || undefined,
+          isCallMessage: msgData.isCallMessage || false
         });
+      });
 
-        // Trigger Celebration & play notification engine sound!
-        setCelebratedCar(car);
-        setCelebrationOpen(true);
-        playConfiguredEngineSound();
-      }, 600);
+      setMatches(prevMatches => prevMatches.map(m => {
+        if (m.id === activeMatchId) {
+          return {
+            ...m,
+            messages: messagesList
+          };
+        }
+        return m;
+      }));
+    }, (err) => {
+      console.error('Error al escuchar los mensajes:', err);
+    });
+
+    return () => unsubscribe();
+  }, [activeMatchId, currentUser]);
+
+  // Dynamic single-time messages loader for matches list overview
+  useEffect(() => {
+    if (!currentUser || matches.length === 0 || currentUser.isLocal) return;
+    
+    matches.forEach(async (match) => {
+      if (match.messages.length > 0) return; // Already loaded or synced
+      
+      try {
+        const msgsSnap = await getDocs(collection(db, 'matches', match.id, 'messages'));
+        const messagesList: Message[] = [];
+        msgsSnap.forEach((msgDoc) => {
+          const msgData = msgDoc.data();
+          messagesList.push({
+            id: msgDoc.id,
+            sender: msgData.senderUid === currentUser.uid ? 'user' : 'other',
+            text: msgData.text,
+            timestamp: msgData.timestamp || new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+            mediaType: msgData.mediaType || undefined,
+            mediaUrl: msgData.mediaUrl || undefined,
+            callDuration: msgData.callDuration || undefined,
+            isCallMessage: msgData.isCallMessage || false
+          });
+        });
+        
+        messagesList.sort((a, b) => a.id.localeCompare(b.id));
+        
+        setMatches(prevMatches => prevMatches.map(m => {
+          if (m.id === match.id) {
+            return { ...m, messages: messagesList };
+          }
+          return m;
+        }));
+      } catch (err) {
+        console.error('Error al cargar mensajes para la vista general de coincidencias:', err);
+      }
+    });
+  }, [currentUser, matches.length]);
+
+  // Función para traducir errores de Firebase Auth al español
+  const getFriendlySpanishAuthError = (error: any): string => {
+    const code = error?.code || '';
+    const errMsg = error?.message || String(error);
+
+    if (code === 'auth/unauthorized-domain' || errMsg.includes('unauthorized-domain')) {
+      return `Error de Dominio: El host actual no está en la lista de "Dominios autorizados" de tu consola Firebase. Para solucionarlo, ve a tu Firebase Console -> Authentication -> Configuración -> Dominios autorizados y agrega: ${window.location.hostname}. Mientras tanto, te recomendamos usar el Modo Local Offline.`;
+    }
+    if (code === 'auth/popup-closed-by-user' || errMsg.includes('popup-closed-by-user')) {
+      return 'La ventana de inicio de sesión de Google fue cerrada antes de completarse. Esto ocurre habitualmente al cerrarla manualmente o si estás usando la app dentro de la vista previa de AI Studio (un iFrame). Para solucionarlo, te sugerimos abrir la app en una pestaña nueva o usar el "Modo Local Offline" instantáneo.';
+    }
+    if (code === 'auth/popup-blocked' || errMsg.includes('popup-blocked')) {
+      return 'El navegador bloqueó la ventana emergente de Google. Por favor, habilita las ventanas emergentes en tu navegador o abre la aplicación en una pestaña nueva para iniciar sesión con normalidad. También puedes usar el "Modo Local Offline".';
+    }
+    if (code === 'auth/operation-not-allowed' || errMsg.includes('operation-not-allowed')) {
+      return 'El método de inicio de sesión seleccionado no está habilitado en tu consola de Firebase. Asegúrate de activar Google o Anónimo (Invitados) en la sección de Proveedores de Inicio de Sesión de Firebase Auth.';
+    }
+    if (code === 'auth/admin-restricted-operation' || errMsg.includes('admin-restricted-operation') || errMsg.includes('restricted-operation')) {
+      return 'El inicio de sesión como invitado (Anónimo) está desactivado en tu consola de Firebase. Para habilitarlo, ve a Firebase Console -> Authentication -> Sign-in method y activa el proveedor "Anónimo". Mientras tanto, puedes usar el Modo Local.';
+    }
+    if (code === 'auth/network-request-failed' || errMsg.includes('network-request-failed')) {
+      return 'Error de red. Por favor, verifica tu conexión a internet e inténtalo de nuevo.';
+    }
+    if (code === 'auth/internal-error' || errMsg.includes('internal-error')) {
+      return 'Ocurrió un error interno en Firebase. Por favor, inténtalo más tarde.';
+    }
+    if (code === 'auth/user-disabled' || errMsg.includes('user-disabled')) {
+      return 'Esta cuenta de usuario ha sido desactivada por un administrador.';
+    }
+    
+    let cleanMsg = errMsg;
+    if (cleanMsg.startsWith('Firebase:')) {
+      cleanMsg = cleanMsg.replace(/^Firebase:\s*/, '');
+    }
+    return `Error de autenticación: ${cleanMsg}`;
+  };
+
+  // Iniciar Sesión con Google (Google Sign-In)
+  const handleGoogleSignIn = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      setAuthLoading(true);
+      setAuthError(null);
+      await signInWithPopup(auth, provider);
+    } catch (error: any) {
+      console.error('Error al iniciar sesión con Google:', error);
+      setAuthError(getFriendlySpanishAuthError(error));
+    } finally {
+      setAuthLoading(false);
     }
   };
 
-  const handleSwipeLeft = (car: Car) => {
-    const updatedSwiped = [...swipedCarIds, car.id];
-    setSwipedCarIds(updatedSwiped);
-    saveToStorage('automatch_swiped_ids', updatedSwiped);
+  // Iniciar como Invitado (Anonymous Sign-In)
+  const handleGuestSignIn = async () => {
+    try {
+      setAuthLoading(true);
+      setAuthError(null);
+      await signInAnonymously(auth);
+    } catch (error: any) {
+      console.error('Error al iniciar sesión como invitado:', error);
+      setAuthError(getFriendlySpanishAuthError(error));
+      
+      // Auto fallback to local session mode if guest operation is restricted
+      console.log('Cambiando automáticamente al modo de sesión local...');
+      handleSelectLocalMode();
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
-    const updatedLeftSwiped = [car.id, ...leftSwipedCarIds.filter(id => id !== car.id)];
-    setLeftSwipedCarIds(updatedLeftSwiped);
-    saveToStorage('automatch_left_swiped_ids', updatedLeftSwiped);
+  const handleSelectLocalMode = () => {
+    setAuthLoading(true);
+    const localUser = {
+      uid: 'local_user_guest',
+      displayName: 'Invitado Local',
+      email: 'invitado@automatch.cl',
+      isAnonymous: true,
+      isLocal: true
+    };
+    
+    const storedUserName = localStorage.getItem('automatch_user_name');
+    const storedUserCar = localStorage.getItem('automatch_user_car');
+    
+    if (storedUserName) {
+      setUserName(storedUserName);
+    } else {
+      setUserName('Invitado Local');
+    }
+    
+    if (storedUserCar) {
+      setUserCar(JSON.parse(storedUserCar));
+    } else {
+      setUserCar(null);
+    }
+    
+    setCurrentUser(localUser);
+    setAuthError(null);
+    setAuthLoading(false);
+  };
+
+  // Guardar datos tras completar Onboarding
+  const handleOnboardingComplete = async (car: UserCar, name: string) => {
+    if (!currentUser) return;
+
+    if (currentUser.isLocal) {
+      const carId = `local_car_${Date.now()}`;
+      const carPayload = {
+        ...car,
+        id: carId,
+        ownerUid: currentUser.uid,
+        ownerName: name,
+        createdAt: new Date().toISOString()
+      };
+      setUserName(name);
+      setUserCar(carPayload as any);
+      localStorage.setItem('automatch_user_name', name);
+      localStorage.setItem('automatch_user_car', JSON.stringify(carPayload));
+      return;
+    }
+
+    try {
+      // Save User Profile details to Firestore
+      const userDocRef = doc(db, 'users', currentUser.uid);
+      await setDoc(userDocRef, {
+        id: currentUser.uid,
+        name: name,
+        contactPhone: car.contactPhone || '',
+        createdAt: new Date().toISOString()
+      });
+
+      // Save user car details to Firestore
+      const carId = `car_${currentUser.uid}_${Date.now()}`;
+      const carPayload = {
+        ...car,
+        id: carId,
+        ownerUid: currentUser.uid,
+        ownerName: name,
+        createdAt: new Date().toISOString()
+      };
+
+      await setDoc(doc(db, 'cars', carId), carPayload);
+
+      setUserName(name);
+      setUserCar(carPayload as any);
+    } catch (err) {
+      console.error('Error al guardar datos de onboarding en Firestore:', err);
+    }
+  };
+
+  // Swipe Action processing
+  const handleSwipeAction = async (car: Car, type: 'like' | 'superlike') => {
+    if (!currentUser || !userCar) return;
+
+    if (currentUser.isLocal) {
+      const updatedSwiped = [...swipedCarIds, car.id];
+      setSwipedCarIds(updatedSwiped);
+      localStorage.setItem('automatch_swiped_ids', JSON.stringify(updatedSwiped));
+
+      // 40% chance of Match or 100% chance if superlike
+      const isMatch = car.likesUser || type === 'superlike';
+      if (isMatch) {
+        setTimeout(() => {
+          const matchId = `local_match_${car.id}_${Date.now()}`;
+          const newMatch: Match = {
+            id: matchId,
+            car,
+            timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+            unread: true,
+            messages: [
+              {
+                id: `sys_${Date.now()}`,
+                sender: 'other',
+                text: `[Sistema] ¡Felicidades, es un AutoMatch! Has conectado con ${car.ownerName} para negociar.`,
+                timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
+              },
+              {
+                id: `msg_${Date.now()}`,
+                sender: 'other',
+                text: car.chatPersona?.greeting || `¡Hola! Me encantó tu publicación. ¿Hablemos de negocios?`,
+                timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
+              }
+            ]
+          };
+
+          setMatches(prevMatches => {
+            const updatedMatches = [newMatch, ...prevMatches.filter(m => m.car.id !== car.id)];
+            localStorage.setItem('automatch_matches', JSON.stringify(updatedMatches));
+            return updatedMatches;
+          });
+
+          setCelebratedCar(car);
+          setCelebrationOpen(true);
+          playConfiguredEngineSound();
+        }, 600);
+      }
+      return;
+    }
+
+    const swipeId = `swipe_${currentUser.uid}_${car.id}`;
+    const swipePayload = {
+      id: swipeId,
+      senderUid: currentUser.uid,
+      targetCarId: car.id,
+      type: 'like',
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      await setDoc(doc(db, 'swipes', swipeId), swipePayload);
+      
+      const isMockCar = car.id.startsWith('seeded_') || car.isSeeded;
+      let isMatch = false;
+
+      if (isMockCar) {
+        isMatch = car.likesUser || type === 'superlike';
+      } else {
+        // Find if they mutually liked our car
+        const userCarId = (userCar as any).id;
+        const mutualSwipeQuery = query(
+          collection(db, 'swipes'),
+          where('senderUid', '==', car.ownerUid),
+          where('targetCarId', '==', userCarId),
+          where('type', '==', 'like')
+        );
+        const mutualSnap = await getDocs(mutualSwipeQuery);
+        isMatch = !mutualSnap.empty || type === 'superlike';
+      }
+
+      if (isMatch) {
+        // Create live mutual Match
+        const matchId = `match_${currentUser.uid}_${car.ownerUid}_${Date.now()}`;
+        const matchPayload = {
+          id: matchId,
+          participants: [currentUser.uid, car.ownerUid],
+          carId1: (userCar as any).id,
+          carId2: car.id,
+          createdAt: new Date().toISOString(),
+          unreadUids: [car.ownerUid],
+        };
+
+        await setDoc(doc(db, 'matches', matchId), matchPayload);
+
+        // Add System Match Info message
+        const systemMsgRef = doc(collection(db, 'matches', matchId, 'messages'), `sys_msg_${Date.now()}`);
+        await setDoc(systemMsgRef, {
+          senderUid: 'system',
+          text: `[Sistema] ¡Felicidades, es un AutoMatch! Has conectado con ${car.ownerName} para negociar. ${car.ownerName} busca: "${car.permutaPreferences || 'Abierto a ofertas'}"`,
+          createdAt: new Date().toISOString()
+        });
+
+        // Add initial bot/seller greeting message
+        const greetMsgRef = doc(collection(db, 'matches', matchId, 'messages'), `greet_msg_${Date.now()}`);
+        await setDoc(greetMsgRef, {
+          senderUid: car.ownerUid,
+          text: car.chatPersona?.greeting || `¡Hola! Me encantó tu auto. ¿De dónde eres para coordinar?`,
+          createdAt: new Date().toISOString()
+        });
+
+        // Display celebration interface
+        setCelebratedCar(car);
+        setCelebrationOpen(true);
+        playConfiguredEngineSound();
+      }
+    } catch (err) {
+      console.error('Error al procesar deslizamiento a la derecha:', err);
+    }
+  };
+
+  const handleSwipeLeft = async (car: Car) => {
+    if (!currentUser) return;
+    if (currentUser.isLocal) {
+      const updatedSwiped = [...swipedCarIds, car.id];
+      setSwipedCarIds(updatedSwiped);
+      localStorage.setItem('automatch_swiped_ids', JSON.stringify(updatedSwiped));
+
+      const updatedLeftSwiped = [car.id, ...leftSwipedCarIds.filter(id => id !== car.id)];
+      setLeftSwipedCarIds(updatedLeftSwiped);
+      localStorage.setItem('automatch_left_swiped_ids', JSON.stringify(updatedLeftSwiped));
+      return;
+    }
+    const swipeId = `swipe_${currentUser.uid}_${car.id}`;
+    try {
+      await setDoc(doc(db, 'swipes', swipeId), {
+        id: swipeId,
+        senderUid: currentUser.uid,
+        targetCarId: car.id,
+        type: 'dislike',
+        createdAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Error al procesar deslizamiento a la izquierda:', err);
+    }
   };
 
   const handleSwipeRight = (car: Car) => {
@@ -233,8 +697,8 @@ export default function App() {
     handleSwipeAction(car, 'superlike');
   };
 
-  // Chat actions
-  const handleSendMessage = (
+  // Enviar mensaje en chat
+  const handleSendMessage = async (
     matchId: string, 
     text: string, 
     sender: 'user' | 'other',
@@ -243,141 +707,309 @@ export default function App() {
     callDuration?: string,
     isCallMessage?: boolean
   ) => {
-    setMatches(prevMatches => {
-      const updatedMatches = prevMatches.map(match => {
-        if (match.id === matchId) {
-          const newMsg: Message = {
-            id: `${sender}_${Date.now()}`,
-            sender,
-            text,
-            timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
-            mediaType,
-            mediaUrl,
-            callDuration,
-            isCallMessage
-          };
-          return {
-            ...match,
-            timestamp: newMsg.timestamp,
-            unread: sender === 'other' && matchId !== activeMatchId, // mark unread only if other is sender and user is not looking
-            messages: [...match.messages, newMsg]
-          };
-        }
-        return match;
+    if (!currentUser) return;
+
+    if (currentUser.isLocal) {
+      const messageId = `msg_${sender}_${Date.now()}`;
+      const activeMatch = matches.find(m => m.id === matchId);
+      if (!activeMatch) return;
+
+      const newMsg: Message = {
+        id: messageId,
+        sender,
+        text,
+        timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+        mediaType,
+        mediaUrl,
+        callDuration,
+        isCallMessage
+      };
+
+      setMatches(prevMatches => {
+        const updatedMatches = prevMatches.map(match => {
+          if (match.id === matchId) {
+            return {
+              ...match,
+              timestamp: newMsg.timestamp,
+              unread: sender === 'other' && matchId !== activeMatchId,
+              messages: [...match.messages, newMsg]
+            };
+          }
+          return match;
+        });
+        localStorage.setItem('automatch_matches', JSON.stringify(updatedMatches));
+        return updatedMatches;
       });
 
-      saveToStorage('automatch_matches', updatedMatches);
-      return updatedMatches;
-    });
-  };
+      // Gemini bot response for seeded owners in Local mode
+      const isMockCar = activeMatch.car.id.startsWith('seeded_') || activeMatch.car.isSeeded;
+      if (sender === 'user' && isMockCar) {
+        setTimeout(async () => {
+          try {
+            const response = await fetch('/api/gemini-chat', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                senderName: activeMatch.car.ownerName,
+                carSpecs: `${activeMatch.car.brand} ${activeMatch.car.model} ${activeMatch.car.year}, ${activeMatch.car.km} km, ${activeMatch.car.fuel}, transmisión ${activeMatch.car.transmission}`,
+                permutaPreferences: activeMatch.car.permutaPreferences,
+                chatPersona: activeMatch.car.chatPersona,
+                userMessage: text,
+                history: activeMatch.messages
+              })
+            });
 
-  const handleMarkRead = (matchId: string) => {
-    setMatches(prevMatches => {
-      const updatedMatches = prevMatches.map(match => {
-        if (match.id === matchId) {
-          return { ...match, unread: false };
-        }
-        return match;
+            const data = await response.json();
+            const replyText = data.text || '¡Buenísima compadre! Estoy manejando ahora pero coordinemos la permuta altiro por Whatsapp.';
+            
+            const replyMsg: Message = {
+              id: `msg_bot_${Date.now()}`,
+              sender: 'other',
+              text: replyText,
+              timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
+            };
+
+            setMatches(prevMatches => {
+              const updatedMatches = prevMatches.map(match => {
+                if (match.id === matchId) {
+                  return {
+                    ...match,
+                    timestamp: replyMsg.timestamp,
+                    unread: matchId !== activeMatchId,
+                    messages: [...match.messages, replyMsg]
+                  };
+                }
+                return match;
+              });
+              localStorage.setItem('automatch_matches', JSON.stringify(updatedMatches));
+              return updatedMatches;
+            });
+          } catch (geminiErr) {
+            console.error('Error en la respuesta del bot Gemini:', geminiErr);
+          }
+        }, 1500);
+      }
+      return;
+    }
+
+    const messageId = `msg_${sender}_${Date.now()}`;
+    const activeMatch = matches.find(m => m.id === matchId);
+    if (!activeMatch) return;
+
+    const msgPayload = {
+      senderUid: sender === 'user' ? currentUser.uid : activeMatch.car.ownerUid,
+      text,
+      createdAt: new Date().toISOString(),
+      mediaType: mediaType || null,
+      mediaUrl: mediaUrl || null,
+      callDuration: callDuration || null,
+      isCallMessage: isCallMessage || false
+    };
+
+    try {
+      // Add message to match messages subcollection
+      await setDoc(doc(collection(db, 'matches', matchId, 'messages'), messageId), msgPayload);
+
+      // Set match as unread for the receiver and update match lastMessage state
+      await updateDoc(doc(db, 'matches', matchId), {
+        unreadUids: [activeMatch.car.ownerUid]
       });
-      saveToStorage('automatch_matches', updatedMatches);
-      return updatedMatches;
-    });
+
+      // If the target car is a mock seeded AI owner, trigger server side Gemini conversation response!
+      const isMockCar = activeMatch.car.id.startsWith('seeded_') || activeMatch.car.isSeeded;
+      if (sender === 'user' && isMockCar) {
+        setTimeout(async () => {
+          try {
+            const response = await fetch('/api/gemini-chat', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                senderName: activeMatch.car.ownerName,
+                carSpecs: `${activeMatch.car.brand} ${activeMatch.car.model} ${activeMatch.car.year}, ${activeMatch.car.km} km, ${activeMatch.car.fuel}, transmisión ${activeMatch.car.transmission}`,
+                permutaPreferences: activeMatch.car.permutaPreferences,
+                chatPersona: activeMatch.car.chatPersona,
+                userMessage: text,
+                history: activeMatch.messages
+              })
+            });
+
+            const data = await response.json();
+            const replyText = data.text || '¡Buenísima compadre! Estoy manejando ahora pero coordinemos la permuta altiro por Whatsapp.';
+            
+            const replyId = `msg_bot_${Date.now()}`;
+            await setDoc(doc(collection(db, 'matches', matchId, 'messages'), replyId), {
+              senderUid: activeMatch.car.ownerUid,
+              text: replyText,
+              createdAt: new Date().toISOString()
+            });
+
+            // Mark match as unread for user
+            await updateDoc(doc(db, 'matches', matchId), {
+              unreadUids: [currentUser.uid]
+            });
+          } catch (geminiErr) {
+            console.error('Error en la respuesta del bot Gemini:', geminiErr);
+          }
+        }, 1500);
+      }
+    } catch (err) {
+      console.error('Error al enviar el mensaje:', err);
+    }
   };
 
-  const handleUpdateCar = (updatedCar: UserCar) => {
-    setUserCar(updatedCar);
-    saveToStorage('automatch_user_car', updatedCar);
+  const handleMarkRead = async (matchId: string) => {
+    if (!currentUser) return;
+    if (currentUser.isLocal) {
+      setMatches(prevMatches => {
+        const updatedMatches = prevMatches.map(match => {
+          if (match.id === matchId) {
+            return { ...match, unread: false };
+          }
+          return match;
+        });
+        localStorage.setItem('automatch_matches', JSON.stringify(updatedMatches));
+        return updatedMatches;
+      });
+      return;
+    }
+    try {
+      const matchDocRef = doc(db, 'matches', matchId);
+      const matchDocSnap = await getDoc(matchDocRef);
+      if (matchDocSnap.exists()) {
+        const unreadUids = matchDocSnap.data().unreadUids || [];
+        const filteredUnread = unreadUids.filter((uid: string) => uid !== currentUser.uid);
+        await updateDoc(matchDocRef, {
+          unreadUids: filteredUnread
+        });
+      }
+    } catch (err) {
+      console.error('Error al marcar la coincidencia como leída:', err);
+    }
   };
 
-  // Reset swiped list to test again
-  const handleResetDeck = () => {
-    setSwipedCarIds([]);
-    saveToStorage('automatch_swiped_ids', []);
-    setLeftSwipedCarIds([]);
-    saveToStorage('automatch_left_swiped_ids', []);
+  const handleUpdateCar = async (updatedCar: UserCar) => {
+    if (!currentUser) return;
+    if (currentUser.isLocal) {
+      setUserCar(updatedCar);
+      localStorage.setItem('automatch_user_car', JSON.stringify(updatedCar));
+      return;
+    }
+    try {
+      const carsQuery = query(collection(db, 'cars'), where('ownerUid', '==', currentUser.uid));
+      const carsSnap = await getDocs(carsQuery);
+      if (!carsSnap.empty) {
+        const carDocId = carsSnap.docs[0].id;
+        await setDoc(doc(db, 'cars', carDocId), {
+          ...updatedCar,
+          ownerUid: currentUser.uid,
+          ownerName: userName,
+          id: carDocId
+        }, { merge: true });
+      }
+      setUserCar(updatedCar);
+    } catch (err) {
+      console.error('Error al actualizar el perfil del vehículo:', err);
+    }
   };
 
-  const handleRecoverCar = (carId: string) => {
-    const updatedSwiped = swipedCarIds.filter(id => id !== carId);
-    setSwipedCarIds(updatedSwiped);
-    saveToStorage('automatch_swiped_ids', updatedSwiped);
+  // Reset swiped list to test again in Firestore
+  const handleResetDeck = async () => {
+    if (!currentUser) return;
+    if (currentUser.isLocal) {
+      setSwipedCarIds([]);
+      setLeftSwipedCarIds([]);
+      localStorage.setItem('automatch_swiped_ids', JSON.stringify([]));
+      localStorage.setItem('automatch_left_swiped_ids', JSON.stringify([]));
+      return;
+    }
+    try {
+      const swipesQuery = query(collection(db, 'swipes'), where('senderUid', '==', currentUser.uid));
+      const swipesSnap = await getDocs(swipesQuery);
+      for (const swDoc of swipesSnap.docs) {
+        await deleteDoc(doc(db, 'swipes', swDoc.id));
+      }
+    } catch (err) {
+      console.error('Error al restablecer el mazo de deslizamientos:', err);
+    }
+  };
 
-    const updatedLeftSwiped = leftSwipedCarIds.filter(id => id !== carId);
-    setLeftSwipedCarIds(updatedLeftSwiped);
-    saveToStorage('automatch_left_swiped_ids', updatedLeftSwiped);
+  const handleRecoverCar = async (carId: string) => {
+    if (!currentUser) return;
+    if (currentUser.isLocal) {
+      const updatedSwiped = swipedCarIds.filter(id => id !== carId);
+      setSwipedCarIds(updatedSwiped);
+      localStorage.setItem('automatch_swiped_ids', JSON.stringify(updatedSwiped));
+
+      const updatedLeftSwiped = leftSwipedCarIds.filter(id => id !== carId);
+      setLeftSwipedCarIds(updatedLeftSwiped);
+      localStorage.setItem('automatch_left_swiped_ids', JSON.stringify(updatedLeftSwiped));
+      return;
+    }
+    try {
+      const swipeId = `swipe_${currentUser.uid}_${carId}`;
+      await deleteDoc(doc(db, 'swipes', swipeId));
+    } catch (err) {
+      console.error('Error al recuperar el auto deslizado:', err);
+    }
   };
 
   const handleLikeCarDirectly = (car: Car) => {
-    // Remove from left swipes
-    const updatedLeftSwiped = leftSwipedCarIds.filter(id => id !== car.id);
-    setLeftSwipedCarIds(updatedLeftSwiped);
-    saveToStorage('automatch_left_swiped_ids', updatedLeftSwiped);
-
-    // Call swipe right
     handleSwipeAction(car, 'like');
   };
 
   // Boost simulated premium feature
   const handleBoost = () => {
     setIsBoosted(true);
-    saveToStorage('automatch_boosted', true);
-
-    // Simulate getting an instant Match when boosted!
     setTimeout(() => {
-      setMatches(prevMatches => {
-        // Find a car that isn't already matched
-        const unmatched = MOCK_CARS.filter(c => !prevMatches.some(m => m.id === c.id));
-        const randomCar = unmatched.length > 0 ? unmatched[Math.floor(Math.random() * unmatched.length)] : MOCK_CARS[1];
+      // Find a car that isn't already matched
+      const unmatched = dbCars.filter(c => c.ownerUid !== currentUser?.uid && !matches.some(m => m.car.id === c.id));
+      const randomCar = unmatched.length > 0 ? unmatched[Math.floor(Math.random() * unmatched.length)] : dbCars[0];
 
-        const newMatch: Match = {
-          id: randomCar.id,
-          car: randomCar,
-          timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
-          unread: true,
-          messages: [
-            {
-              id: `sys_boost_${Date.now()}`,
-              sender: 'other',
-              text: `[Sistema Boost] ¡Un cliente Premium ha hecho Match contigo!`,
-              timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
-            },
-            {
-              id: `msg_boost_${Date.now()}`,
-              sender: 'other',
-              text: `¡Hola! Me apareció tu auto destacado. Me interesa caleta permutar mi ${randomCar.brand} ${randomCar.model} por el tuyo. ¿Te tinca conversar?`,
-              timestamp: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
-            }
-          ]
-        };
-
-        const updatedMatches = [newMatch, ...prevMatches.filter(m => m.id !== randomCar.id)];
-        saveToStorage('automatch_matches', updatedMatches);
-
-        // Run side-effects safely after state update scheduling
-        setTimeout(() => {
-          setCelebratedCar(randomCar);
-          setCelebrationOpen(true);
-          playConfiguredEngineSound();
-        }, 0);
-
-        return updatedMatches;
-      });
-    }, 4000);
+      if (randomCar) {
+        handleSwipeAction(randomCar, 'superlike');
+      }
+    }, 3000);
   };
 
-  // Clear all saved data to start over completely
-  const handleHardReset = () => {
-    if (confirm('¿Estás seguro de reiniciar todo? Se borrarán tus datos de auto publicado y tus chats.')) {
-      localStorage.clear();
-      setUserCar(null);
-      setUserName('');
-      setSwipedCarIds([]);
-      setLeftSwipedCarIds([]);
-      setMatches([]);
-      setIsBoosted(false);
-      setActiveTab('swipe');
-      setActiveMatchId(null);
-      setDetailCar(null);
+  // Clear all saved data (Sign Out)
+  const handleHardReset = async () => {
+    if (confirm('¿Estás seguro de cerrar sesión de AutoMatch Chile?')) {
+      if (currentUser?.isLocal) {
+        setUserCar(null);
+        setUserName('');
+        setSwipedCarIds([]);
+        setLeftSwipedCarIds([]);
+        setMatches([]);
+        setIsBoosted(false);
+        setActiveTab('swipe');
+        setActiveMatchId(null);
+        setDetailCar(null);
+        setCurrentUser(null);
+        localStorage.removeItem('automatch_user_name');
+        localStorage.removeItem('automatch_user_car');
+        localStorage.removeItem('automatch_swiped_ids');
+        localStorage.removeItem('automatch_left_swiped_ids');
+        localStorage.removeItem('automatch_matches');
+        return;
+      }
+      try {
+        await signOut(auth);
+        setUserCar(null);
+        setUserName('');
+        setSwipedCarIds([]);
+        setLeftSwipedCarIds([]);
+        setMatches([]);
+        setIsBoosted(false);
+        setActiveTab('swipe');
+        setActiveMatchId(null);
+        setDetailCar(null);
+      } catch (err) {
+        console.error('Error al cerrar sesión:', err);
+      }
     }
   };
 
@@ -388,11 +1020,13 @@ export default function App() {
 
   const handleUpdateSearchPreferences = (prefs: { maxKm: string; region: string }) => {
     setSearchPreferences(prefs);
-    saveToStorage('automatch_search_preferences', prefs);
   };
 
-  // Filter cars to show in SwipeDeck (exclude swiped cars and apply search preferences)
-  const remainingCars = MOCK_CARS.filter(car => {
+  // Filter cars to show in SwipeDeck
+  const remainingCars = dbCars.filter(car => {
+    // 0. Exclude own car
+    if (userCar && car.ownerUid === currentUser?.uid) return false;
+
     // 1. Exclude already swiped cars
     if (swipedCarIds.includes(car.id)) return false;
 
@@ -447,6 +1081,13 @@ export default function App() {
             setPrivacyModalTab(tab);
             setPrivacyModalOpen(true);
           }} 
+          currentUser={currentUser}
+          onGoogleSignIn={handleGoogleSignIn}
+          onGuestSignIn={handleGuestSignIn}
+          authLoading={authLoading}
+          authError={authError}
+          onSelectLocalMode={handleSelectLocalMode}
+          onClearAuthError={() => setAuthError(null)}
         />
         <AnimatePresence>
           {privacyModalOpen && (

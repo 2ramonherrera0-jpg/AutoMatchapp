@@ -32,6 +32,13 @@ import appLogo from '../assets/images/app_logo_1784102975399.jpg';
 interface OnboardingProps {
   onComplete: (userCar: UserCar, userName: string) => void;
   onOpenPrivacy?: (tab: 'privacy' | 'disclosure' | 'terms') => void;
+  currentUser: any;
+  onGoogleSignIn: () => Promise<void>;
+  onGuestSignIn: () => Promise<void>;
+  authLoading: boolean;
+  authError?: string | null;
+  onSelectLocalMode?: () => void;
+  onClearAuthError?: () => void;
 }
 
 // Preset photos for user's car to look beautiful, each mapped to a full rich gallery of details
@@ -93,7 +100,17 @@ const PHOTO_PRESETS = [
   }
 ];
 
-export default function Onboarding({ onComplete, onOpenPrivacy }: OnboardingProps) {
+export default function Onboarding({ 
+  onComplete, 
+  onOpenPrivacy, 
+  currentUser, 
+  onGoogleSignIn, 
+  onGuestSignIn, 
+  authLoading,
+  authError,
+  onSelectLocalMode,
+  onClearAuthError
+}: OnboardingProps) {
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0); // 0: Welcome, 1: Valuation & Car Info, 2: Swap/Sell Prefs, 3: Contact & Presets
 
   // Form State
@@ -307,7 +324,7 @@ export default function Onboarding({ onComplete, onOpenPrivacy }: OnboardingProp
           views: Math.floor(Math.random() * 25) + 5,
           likes: Math.floor(Math.random() * 8) + 1,
           superLikes: 0,
-          contactPhone: contactPhone || '+56912345678'
+          contactPhone: (contactPhone || '+56912345678').replace(/\s+/g, '')
         };
 
         onComplete(userCar, userName);
@@ -613,46 +630,183 @@ export default function Onboarding({ onComplete, onOpenPrivacy }: OnboardingProp
               </div>
             </div>
 
-            {/* Quick Presets Options */}
-            <div className="mb-8 p-5 bg-gradient-to-r from-red-950/40 to-[#0a0a0a] rounded-2xl border border-red-600/15 text-white text-left">
-              <span className="text-xs uppercase font-mono tracking-widest text-red-400 font-bold block mb-2">Comienza al Instante (Piloto de Prueba)</span>
-              <h4 className="font-bold text-sm mb-3 text-white/90">Elige un perfil rápido de auto chileno para probar la app:</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleQuickFill('Suzuki', 'Swift', 2019, 58000, 9200000, 'hatchback')}
-                  className="flex items-center justify-between text-left bg-white/5 hover:bg-white/10 hover:border-red-500 transition-all p-3 rounded-xl border border-white/10 text-xs font-medium cursor-pointer"
-                  id="fill_swift_btn"
-                >
-                  <div>
-                    <p className="font-bold text-white">Suzuki Swift 2019</p>
-                    <p className="text-red-400 font-mono">58k km • $9.200.000 CLP</p>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-white/50" />
-                </button>
+            {/* Quick Presets Options & Authentication */}
+            {!currentUser ? (
+              <div className="mb-8 p-6 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-xl text-center">
+                <ShieldCheck className="w-8 h-8 text-red-500 mx-auto mb-3 animate-pulse" />
+                <h3 className="text-md font-sans font-black uppercase tracking-tight text-white mb-2">
+                  Inicia Sesión en la Comunidad Real
+                </h3>
+                <p className="text-xs text-white/60 mb-5 leading-relaxed max-w-sm mx-auto">
+                  Para poder contactar personas reales, verificar patentes en Chile y guardar tu auto en la nube real de Firestore, por favor inicia tu sesión segura.
+                </p>
 
-                <button
-                  onClick={() => handleQuickFill('Mazda', 'CX-5', 2020, 48000, 16800000, 'suv')}
-                  className="flex items-center justify-between text-left bg-white/5 hover:bg-white/10 hover:border-red-500 transition-all p-3 rounded-xl border border-white/10 text-xs font-medium cursor-pointer"
-                  id="fill_cx5_btn"
-                >
-                  <div>
-                    <p className="font-bold text-white">Mazda CX-5 2020</p>
-                    <p className="text-red-400 font-mono">48k km • $16.800.000 CLP</p>
+                {authError && (
+                  <div className="mb-5 p-3.5 bg-red-950/40 border border-red-500/20 rounded-xl text-left text-xs text-red-200 relative">
+                    {onClearAuthError && (
+                      <button
+                        type="button"
+                        onClick={onClearAuthError}
+                        className="absolute top-2.5 right-2.5 text-red-400 hover:text-red-200 text-sm font-bold bg-transparent border-0 cursor-pointer p-1"
+                        title="Descartar aviso"
+                      >
+                        ✕
+                      </button>
+                    )}
+                    <p className="font-bold flex items-center gap-1.5 mb-1 text-red-400 pr-6">
+                      <AlertTriangle className="w-4 h-4 shrink-0 animate-bounce" />
+                      Aviso de Configuración de Firebase Auth:
+                    </p>
+                    <p className="leading-relaxed font-mono text-[10px] bg-black/45 p-2 rounded border border-white/5 overflow-x-auto mb-2 text-red-300">
+                      {authError}
+                    </p>
+                    <p className="leading-relaxed mb-3 text-[11px] text-white/70">
+                      {authError.includes('ventana de inicio de sesión de Google') || authError.includes('popup-closed-by-user') || authError.includes('popup-blocked') || authError.includes('bloqueó')
+                        ? 'Las políticas de seguridad del navegador a menudo bloquean las ventanas emergentes (popups) o las cookies de terceros cuando se ejecuta la aplicación dentro de un iFrame (el panel de vista previa de AI Studio). Para solucionarlo y usar Google Sign-In, abre la aplicación en una pestaña nueva con el botón en la barra superior, o simplemente inicia usando el Modo Local.'
+                        : authError.includes('Anónimo') || authError.includes('restricted-operation')
+                        ? 'El proveedor "Anónimo" está inactivo. Para activarlo, ve a Firebase Console -> Authentication -> Sign-in method y activa el proveedor "Anónimo". O puedes usar el Modo Local Offline.'
+                        : 'Debido a que el entorno de desarrollo se ejecuta en un subdominio dinámico, Google requiere agregar este host a los "Dominios autorizados" en tu consola Firebase o habilitar el login anónimo de invitados en los proveedores de Auth.'
+                      }
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      {onSelectLocalMode && (
+                        <button
+                          onClick={onSelectLocalMode}
+                          className="flex-1 bg-red-600 hover:bg-red-700 transition-all text-white font-bold py-2.5 px-3 rounded-lg text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                          type="button"
+                          id="fallback_local_error_btn"
+                        >
+                          <Zap className="w-3.5 h-3.5" />
+                          Omitir y Usar Modo Local Offline (Recomendado)
+                        </button>
+                      )}
+                      {onClearAuthError && (
+                        <button
+                          onClick={onClearAuthError}
+                          className="px-3 py-2.5 bg-white/10 hover:bg-white/15 transition-all text-white font-bold rounded-lg text-xs flex items-center justify-center cursor-pointer border border-white/10"
+                          type="button"
+                        >
+                          Limpiar / Reintentar
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <ArrowRight className="w-4 h-4 text-white/50" />
-                </button>
+                )}
+
+                {authLoading ? (
+                  <div className="flex flex-col items-center py-4">
+                    <div className="w-8 h-8 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                    <span className="text-xs font-mono text-white/50">Validando sesión...</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2.5">
+                    {/* Google Login button */}
+                    <button
+                      onClick={onGoogleSignIn}
+                      className="w-full bg-white hover:bg-zinc-100 text-zinc-950 font-bold py-3.5 px-6 rounded-xl flex items-center justify-center gap-2 text-sm transition-all cursor-pointer shadow-md"
+                      id="google_signin_btn"
+                      type="button"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24">
+                        <path
+                          fill="#4285F4"
+                          d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.9h6.6c-.28 1.5-1.11 2.76-2.39 3.62v3h3.86c2.26-2.08 3.56-5.14 3.56-8.7c0-.25-.01-.5-.03-.75z"
+                        />
+                        <path
+                          fill="#34A853"
+                          d="M12 24c3.24 0 5.97-1.08 7.96-2.91l-3.86-3c-1.08.72-2.45 1.16-4.1 1.16-3.15 0-5.82-2.13-6.78-5H1.36v3.1A11.993 11.993 0 0 0 12 24z"
+                        />
+                        <path
+                          fill="#FBBC05"
+                          d="M5.22 14.25A7.16 7.16 0 0 1 4.8 12c0-.79.13-1.57.38-2.31V6.58H1.36A11.947 11.947 0 0 0 0 12c0 2.02.5 3.93 1.36 5.61l3.86-3.36z"
+                        />
+                        <path
+                          fill="#EA4335"
+                          d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.96 1.19 15.24 0 12 0 7.36 0 3.37 2.67 1.36 6.58l3.86 3.31c.96-2.87 3.63-5.14 6.78-5.14z"
+                        />
+                      </svg>
+                      Ingresar Seguro con Google
+                    </button>
+
+                    {/* Guest Login button */}
+                    <button
+                      onClick={onGuestSignIn}
+                      className="w-full bg-zinc-800 hover:bg-zinc-700 active:scale-[0.98] border border-zinc-700 hover:border-zinc-600 transition-all py-3.5 px-6 rounded-xl text-sm font-bold flex items-center justify-center gap-2 text-white cursor-pointer"
+                      id="guest_signin_btn"
+                      type="button"
+                    >
+                      <Sparkles className="w-4 h-4 text-yellow-400 animate-bounce" />
+                      Entrar en Modo Invitado (Prueba Rápida)
+                    </button>
+
+                    {/* ALWAYS show a clean local mode option below if they just want a smooth, instant demo */}
+                    <button
+                      onClick={onSelectLocalMode}
+                      className="w-full bg-red-600/10 hover:bg-red-600/20 active:scale-[0.98] border border-red-500/20 hover:border-red-500/35 transition-all py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 text-red-400 cursor-pointer"
+                      id="fallback_local_signin_btn"
+                      type="button"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-red-500" />
+                      Omitir y Usar Modo Local/Demo
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="mb-8 p-5 bg-emerald-950/40 border border-emerald-500/20 rounded-2xl flex items-center gap-3.5 text-left">
+                  <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20 shrink-0">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider font-mono">Sesión Iniciada Exitosamente</p>
+                    <p className="text-sm font-bold text-white mt-0.5">¡Hola, {currentUser.displayName || currentUser.email || 'Usuario de AutoMatch'}!</p>
+                    <p className="text-xs text-white/50 mt-0.5">Ya puedes publicar tu vehículo para guardarlo en la nube real de Firestore.</p>
+                  </div>
+                </div>
 
-            {/* Manual button */}
-            <button
-              onClick={() => setStep(1)}
-              className="w-full bg-red-600 hover:bg-red-700 transition-all text-white font-bold py-4 px-6 rounded-2xl flex items-center justify-center gap-2 text-base cursor-pointer shadow-lg shadow-red-600/35"
-              id="start_manual_btn"
-            >
-              Publicar mi Auto Manualmente
-              <ArrowRight className="w-5 h-5" />
-            </button>
+                {/* Quick Presets Options */}
+                <div className="mb-8 p-5 bg-gradient-to-r from-red-950/40 to-[#0a0a0a] rounded-2xl border border-red-600/15 text-white text-left">
+                  <span className="text-xs uppercase font-mono tracking-widest text-red-400 font-bold block mb-2">Comienza al Instante (Piloto de Prueba)</span>
+                  <h4 className="font-bold text-sm mb-3 text-white/90">Elige un perfil rápido de auto chileno para probar la app:</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handleQuickFill('Suzuki', 'Swift', 2019, 58000, 9200000, 'hatchback')}
+                      className="flex items-center justify-between text-left bg-white/5 hover:bg-white/10 hover:border-red-500 transition-all p-3 rounded-xl border border-white/10 text-xs font-medium cursor-pointer"
+                      id="fill_swift_btn"
+                    >
+                      <div>
+                        <p className="font-bold text-white">Suzuki Swift 2019</p>
+                        <p className="text-red-400 font-mono">58k km • $9.200.000 CLP</p>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-white/50" />
+                    </button>
+
+                    <button
+                      onClick={() => handleQuickFill('Mazda', 'CX-5', 2020, 48000, 16800000, 'suv')}
+                      className="flex items-center justify-between text-left bg-white/5 hover:bg-white/10 hover:border-red-500 transition-all p-3 rounded-xl border border-white/10 text-xs font-medium cursor-pointer"
+                      id="fill_cx5_btn"
+                    >
+                      <div>
+                        <p className="font-bold text-white">Mazda CX-5 2020</p>
+                        <p className="text-red-400 font-mono">48k km • $16.800.000 CLP</p>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-white/50" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Manual button */}
+                <button
+                  onClick={() => setStep(1)}
+                  className="w-full bg-red-600 hover:bg-red-700 transition-all text-white font-bold py-4 px-6 rounded-2xl flex items-center justify-center gap-2 text-base cursor-pointer shadow-lg shadow-red-600/35"
+                  id="start_manual_btn"
+                >
+                  Publicar mi Auto Manualmente
+                  <ArrowRight className="w-5 h-5" />
+                </button>
+              </>
+            )}
           </motion.div>
         ) : step === 1 ? (
           /* PASO 1: CAR INFO & VALUATION */
