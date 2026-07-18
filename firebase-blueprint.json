@@ -1,0 +1,221 @@
+{
+  "collections": {
+    "users": {
+      "description": "User profiles registered on AutoMatch Chile, representing individual sellers.",
+      "fields": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier matching the Firebase Authentication UID."
+        },
+        "name": {
+          "type": "string",
+          "description": "User's full name or screen name.",
+          "constraints": "1 <= size <= 100"
+        },
+        "contactPhone": {
+          "type": "string",
+          "description": "OTP-verified phone number.",
+          "constraints": "matches('^\\+569[0-9]{8}$')"
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "Timestamp when the user account was created."
+        }
+      },
+      "indexes": []
+    },
+    "cars": {
+      "description": "Vehicle listings uploaded by users.",
+      "fields": {
+        "id": {
+          "type": "string",
+          "description": "Unique vehicle ID."
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "UID of the user who owns this vehicle listing."
+        },
+        "brand": {
+          "type": "string",
+          "description": "Brand of the vehicle.",
+          "constraints": "1 <= size <= 50"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model of the vehicle.",
+          "constraints": "1 <= size <= 50"
+        },
+        "year": {
+          "type": "number",
+          "description": "Year of manufacture.",
+          "constraints": "1900 <= value <= 2027"
+        },
+        "km": {
+          "type": "number",
+          "description": "Current mileage in kilometers.",
+          "constraints": "0 <= value <= 1000000"
+        },
+        "price": {
+          "type": "number",
+          "description": "Price in Chilean Pesos (CLP).",
+          "constraints": "0 <= value <= 500000000"
+        },
+        "location": {
+          "type": "string",
+          "description": "Commune and region in Chile."
+        },
+        "fuel": {
+          "type": "string",
+          "description": "Fuel type used.",
+          "constraints": "value in ['Bencina', 'Diésel', 'Híbrido', 'Eléctrico']"
+        },
+        "transmission": {
+          "type": "string",
+          "description": "Transmission type.",
+          "constraints": "value in ['Manual', 'Automática']"
+        },
+        "permuta": {
+          "type": "boolean",
+          "description": "Indicates if the owner is open to car swapping."
+        },
+        "permutaPreferences": {
+          "type": "string",
+          "description": "Text describing what kind of vehicle they want to swap for."
+        },
+        "description": {
+          "type": "string",
+          "description": "Text description of the car."
+        },
+        "image": {
+          "type": "string",
+          "description": "URL of the primary representative image."
+        },
+        "views": {
+          "type": "number",
+          "description": "Counter for details page views."
+        },
+        "likes": {
+          "type": "number",
+          "description": "Counter for likes received."
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "Timestamp when the listing was created."
+        }
+      },
+      "indexes": [
+        {
+          "fields": [
+            {
+              "fieldPath": "ownerUid",
+              "order": "ASCENDING"
+            },
+            {
+              "fieldPath": "createdAt",
+              "order": "DESCENDING"
+            }
+          ]
+        }
+      ]
+    },
+    "swipes": {
+      "description": "Swipe events recorded for matching logic.",
+      "fields": {
+        "id": {
+          "type": "string",
+          "description": "Unique swipe ID."
+        },
+        "senderUid": {
+          "type": "string",
+          "description": "UID of the user swiping."
+        },
+        "targetCarId": {
+          "type": "string",
+          "description": "ID of the vehicle swiped on."
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of swipe action.",
+          "constraints": "value in ['like', 'dislike']"
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "Timestamp when the swipe was registered."
+        }
+      },
+      "indexes": [
+        {
+          "fields": [
+            {
+              "fieldPath": "senderUid",
+              "order": "ASCENDING"
+            },
+            {
+              "fieldPath": "targetCarId",
+              "order": "ASCENDING"
+            }
+          ]
+        }
+      ]
+    },
+    "matches": {
+      "description": "Pairings created when there is mutual interest between two car owners.",
+      "fields": {
+        "id": {
+          "type": "string",
+          "description": "Unique match ID."
+        },
+        "participants": {
+          "type": "array",
+          "description": "Array of 2 UIDs of users participating in this match conversation."
+        },
+        "carId1": {
+          "type": "string",
+          "description": "First vehicle ID."
+        },
+        "carId2": {
+          "type": "string",
+          "description": "Second vehicle ID."
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "Timestamp when the match was created."
+        }
+      },
+      "indexes": []
+    },
+    "messages": {
+      "description": "Chat messages belonging to a specific match, stored as a subcollection under a match document.",
+      "parentCollection": "matches",
+      "fields": {
+        "id": {
+          "type": "string",
+          "description": "Unique message ID."
+        },
+        "senderUid": {
+          "type": "string",
+          "description": "UID of the message sender."
+        },
+        "text": {
+          "type": "string",
+          "description": "Body text of the message.",
+          "constraints": "1 <= size <= 1000"
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "Timestamp when the message was sent."
+        }
+      },
+      "indexes": [
+        {
+          "fields": [
+            {
+              "fieldPath": "createdAt",
+              "order": "ASCENDING"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

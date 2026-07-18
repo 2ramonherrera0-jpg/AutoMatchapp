@@ -1,0 +1,159 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. GLOBAL SAFETY NET (Default Deny All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -----------------------------------------------------------------
+    // PRIMITIVE DEFINTIONS & HELPERS
+    // -----------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(ownerId) {
+      return isSignedIn() && request.auth.uid == ownerId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidPhone(phone) {
+      return phone is string && phone.matches('^\\+569[0-9]{8}$');
+    }
+
+    // -----------------------------------------------------------------
+    // USERS COLLECTION RULES
+    // -----------------------------------------------------------------
+    match /users/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      
+      allow create: if isSignedIn() 
+        && request.auth.uid == userId 
+        && isValidUser(incoming());
+        
+      allow update: if isSignedIn() 
+        && request.auth.uid == userId 
+        && isValidUser(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'contactPhone']);
+        
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUser(data) {
+      return data.name is string 
+        && data.name.size() >= 1 
+        && data.name.size() <= 100
+        && isValidPhone(data.contactPhone);
+    }
+
+    // -----------------------------------------------------------------
+    // CARS COLLECTION RULES
+    // -----------------------------------------------------------------
+    match /cars/{carId} {
+      // Any authenticated user can read listings to swipe on them
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn() 
+        && isOwner(incoming().ownerUid)
+        && isValidCar(incoming());
+
+      allow update: if isSignedIn() 
+        && isOwner(existing().ownerUid)
+        && isValidCar(incoming())
+        && (
+          // Action: Normal edit by owner
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'brand', 'model', 'year', 'km', 'price', 'location', 
+            'fuel', 'transmission', 'permuta', 'permutaPreferences', 
+            'description', 'image', 'images', 'videos'
+          ])
+        );
+
+      allow delete: if isSignedIn() && isOwner(existing().ownerUid);
+    }
+
+    function isValidCar(data) {
+      return data.ownerUid is string
+        && data.ownerUid.size() <= 128
+        && data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 50
+        && data.model is string && data.model.size() >= 1 && data.model.size() <= 50
+        && data.year is int && data.year >= 1900 && data.year <= 2027
+        && data.km is int && data.km >= 0 && data.km <= 1000000
+        && data.price is int && data.price >= 0 && data.price <= 500000000
+        && data.fuel is string && (data.fuel == 'Bencina' || data.fuel == 'Diésel' || data.fuel == 'Híbrido' || data.fuel == 'Eléctrico')
+        && data.transmission is string && (data.transmission == 'Manual' || data.transmission == 'Automática')
+        && data.permuta is bool;
+    }
+
+    // -----------------------------------------------------------------
+    // SWIPES COLLECTION RULES
+    // -----------------------------------------------------------------
+    match /swipes/{swipeId} {
+      allow read: if isSignedIn() && (existing().senderUid == request.auth.uid);
+
+      allow create: if isSignedIn()
+        && isOwner(incoming().senderUid)
+        && isValidSwipe(incoming());
+
+      allow update: if false; // Swipes are immutable once submitted
+      allow delete: if false;
+    }
+
+    function isValidSwipe(data) {
+      return data.senderUid is string
+        && data.targetCarId is string
+        && data.type is string && (data.type == 'like' || data.type == 'dislike');
+    }
+
+    // -----------------------------------------------------------------
+    // MATCHES COLLECTION RULES
+    // -----------------------------------------------------------------
+    match /matches/{matchId} {
+      // Only participants of the match can read/view it
+      allow read: if isSignedIn() && (request.auth.uid in existing().participants);
+
+      allow create: if isSignedIn()
+        && (request.auth.uid in incoming().participants)
+        && incoming().participants.size() == 2;
+
+      allow update: if false; // Matches are immutable once formed
+      allow delete: if isSignedIn() && (request.auth.uid in existing().participants);
+
+      // ---------------------------------------------------------------
+      // MESSAGES SUBCOLLECTION RULES
+      // ---------------------------------------------------------------
+      match /messages/{messageId} {
+        // Must be participant in parent match to read messages
+        allow read: if isSignedIn() 
+          && (request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.participants);
+
+        // Must be participant to send message, and senderUid must equal auth UID
+        allow create: if isSignedIn()
+          && (request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.participants)
+          && isOwner(incoming().senderUid)
+          && isValidMessage(incoming());
+
+        allow update: if false; // Messages are immutable
+        allow delete: if false;
+      }
+    }
+
+    function isValidMessage(data) {
+      return data.senderUid is string
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 1000;
+    }
+  }
+}

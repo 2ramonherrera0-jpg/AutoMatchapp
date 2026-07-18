@@ -1,0 +1,86 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Deeper premium slate and charcoal grays */
+  --color-zinc-950: #040405; /* Deep rich velvet black */
+  --color-zinc-900: #09090b; /* Deep carbon */
+  --color-zinc-800: #101014; /* Dark basalt */
+  --color-zinc-700: #18181f; /* Charcoal sheet */
+  --color-zinc-600: #24242d; /* Steel frame */
+  --color-zinc-500: #71717a; /* Medium gray */
+  --color-zinc-400: #a1a1aa; /* Light gray */
+  --color-zinc-300: #d4d4d8; /* High brightness gray */
+  --color-zinc-200: #e4e4e7; /* Near white gray */
+  --color-zinc-100: #f4f4f5; /* Bright gray */
+}
+
+/* Global enhancements for high contrast and sunlight readability */
+body {
+  background-color: #040405 !important;
+  color: #fbfbfd !important;
+  font-family: "Inter", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Global headers and prominent text elements use crisp display font */
+h1, h2, h3, h4, .font-display {
+  font-family: "Space Grotesk", sans-serif;
+}
+
+/* Increase contrast for faded out text under high brightness / bright light conditions */
+.text-white\/30 {
+  color: rgba(255, 255, 255, 0.65) !important;
+}
+
+.text-white\/40 {
+  color: rgba(255, 255, 255, 0.72) !important;
+}
+
+.text-white\/50 {
+  color: rgba(255, 255, 255, 0.80) !important;
+}
+
+.text-white\/60 {
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+
+.text-white\/70 {
+  color: rgba(255, 255, 255, 0.94) !important;
+}
+
+.text-white\/80 {
+  color: rgba(255, 255, 255, 0.98) !important;
+}
+
+.text-white\/90 {
+  color: #ffffff !important;
+}
+
+/* Enhance muted/gray utility texts to make sure they don't wash out in bright glare */
+.text-zinc-500 {
+  color: #a1a1aa !important; /* Promoted to zinc-400 */
+}
+
+.text-zinc-400 {
+  color: #d4d4d8 !important; /* Promoted to zinc-300 */
+}
+
+.text-zinc-300 {
+  color: #f4f4f5 !important; /* Promoted to zinc-100 */
+}
+
+/* Make sure select inputs and option backgrounds remain readable and dark */
+select, option {
+  background-color: #040405 !important;
+  color: #ffffff !important;
+}
+
+/* Ensure inputs are sharp, high-contrast, and deeply saturated */
+input::placeholder, textarea::placeholder {
+  color: rgba(255, 255, 255, 0.55) !important;
+}

@@ -1,0 +1,6 @@
+{
+  "name": "AutoMatch Chile",
+  "description": "La nueva modalidad de compra y venta de autos del mercado automotriz en Chile. Desliza, haz match y vende o permuta tu vehículo de forma interactiva y rápida.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
